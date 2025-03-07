@@ -1,60 +1,25 @@
 # arrowgen
 
-A high-performance Go library for efficient encoding and decoding between Go types and Apache Arrow arrays. Designed for applications requiring fast data serialization with Arrow's columnar format.
+A high-performance Go library for efficient encoding and decoding between Go types and Apache Arrow arrays. Designed for applications requiring fast data serialization with minimal memory overhead.
 
 ## Overview
 
-`arrowgen` provides a type-safe, concurrent interface for converting between native Go types (structs/maps) and Apache Arrow records. It leverages SIMD optimizations and memory pooling to achieve high throughput while maintaining type safety.
+`arrowgen` provides a type-safe interface for converting between native Go types (structs/maps) and Apache Arrow records. It offers two APIs:
 
-```mermaid
-graph LR
-    subgraph Input
-        A[Go Structs] --> B[Schema Inference]
-        C[Go Maps] --> B
-    end
-    subgraph Processing
-        B --> D[Encoder]
-        D --> E[Memory Pool]
-        E --> F[SIMD Processing]
-        F --> G[Arrow Builder]
-    end
-    subgraph Output
-        G --> H[Arrow Record]
-        H --> I[Decoder]
-        I --> J[Native Types]
-    end
-```
+1. **Standard API**: Balances performance and usability with good memory safety guarantees
+2. **Zero API**: Optimized for extreme performance with two operational modes:
+   - Zero-allocation mode (minimal GC pressure)
+   - High-throughput mode (maximum processing speed)
 
 ## Features
 
-- **Type-Safe Conversion:** Automatic schema inference from Go structs and maps
-- **High Performance:**
-  - Concurrent processing with adaptive goroutine scaling
-  - SIMD-optimized numeric type handling
-  - Memory pooling for reduced allocations
-- **Flexible API:** Support for both struct tags and dynamic map interfaces
-- **Production Ready:** Thread-safe with comprehensive error handling
-
-## Performance
-
-Benchmarks run on Apple M2 Pro (10 cores) with 10,000 records:
-
-```
-BenchmarkDecodeUsers-10    178 ops    6.5ms/op    7.0MB/op    400K allocs/op
-BenchmarkEncodeUsers-10    170 ops    7.1ms/op    19.6MB/op   400K allocs/op
-```
-
-### Performance Characteristics
-
-- **Throughput:**
-  - Encoding: ~14.3M records/second
-  - Decoding: ~14.9M records/second
-- **Memory Usage:**
-  - Linear scaling with record count
-  - Current optimization focus on reducing allocations
-- **Concurrency:**
-  - Adaptive goroutine scaling based on data size
-  - Optimal for datasets >1000 records
+- **Automatic Schema Inference**: Generate Arrow schemas from Go structs or maps
+- **Type-Safe Conversion**: Strong typing with proper error handling
+- **High Performance**:
+  - SIMD-optimized numeric conversions
+  - Concurrent processing with worker pools
+  - Zero-copy operations (Zero API)
+- **Flexible Implementation**: Choose between memory safety and raw performance
 
 ## Installation
 
@@ -62,7 +27,11 @@ BenchmarkEncodeUsers-10    170 ops    7.1ms/op    19.6MB/op   400K allocs/op
 go get github.com/TFMV/arrowgen
 ```
 
-## Quick Start
+## Usage Examples
+
+### Standard API
+
+The standard API provides a balance of performance and memory safety:
 
 ```go
 package main
@@ -82,7 +51,7 @@ type User struct {
 }
 
 func main() {
-    // Define sample data
+    // Sample data
     users := []User{
         {ID: 1, Email: "user1@example.com"},
         {ID: 2, Email: "user2@example.com"},
@@ -108,52 +77,209 @@ func main() {
     if err := dec.Decode(record, &decoded); err != nil {
         log.Fatal(err)
     }
+    
+    fmt.Printf("Decoded %d users\n", len(decoded))
 }
 ```
 
-## Advanced Usage
+### Zero API
 
-### Memory Management
+The Zero API offers extraordinary performance with two operational modes:
 
-The library uses three types of memory pools:
+#### Zero-Allocation Mode
 
-1. **Value Pool:** Reuses slice allocations for intermediate value storage
-2. **Memory Pool:** Manages Arrow buffer allocations
-3. **SIMD Pool:** Optimizes numeric type conversions with vectorized operations
+Optimized for low latency and minimal GC impact:
 
 ```go
-// Custom encoder with configured memory pools
-enc := encode.NewEncoder(schema)
-enc.SetPoolSize(1024) // Set initial pool capacity
+package main
+
+import (
+    "log"
+    "runtime"
+
+    "github.com/TFMV/arrowgen/zero/decode"
+    "github.com/TFMV/arrowgen/zero/schema"
+    "github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func main() {
+    // Assuming 'record' is an Arrow record from somewhere
+    
+    // Infer schema or use existing schema
+    schema, err := schema.SchemaFromStruct(User{})
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Create zero-allocation decoder
+    decoder := decode.NewDecoder(
+        schema,
+        decode.WithAllocator(memory.NewGoAllocator()),
+    )
+    
+    // Decode with zero-allocation mode
+    var users []User
+    if err := decoder.Decode(record, &users); err != nil {
+        log.Fatal(err)
+    }
+    
+    // Note: With zero-allocation mode, the 'record' must remain
+    // valid while 'users' is being accessed
+}
 ```
 
-### Concurrent Processing
+#### High-Throughput Mode
 
-Automatic scaling based on dataset size:
+Optimized for maximum data processing speed:
 
-- <1000 records: Single-threaded processing
-- 1000-10000 records: 50% of available cores
-- '>10000 records: Full CPU utilization
+```go
+package main
 
-### Supported Types
+import (
+    "log"
+    "runtime"
 
-| Go Type | Arrow Type | Notes |
-|---------|------------|-------|
-| int8-64 | Int8-64 | SIMD optimized |
-| uint8-64 | UInt8-64 | SIMD optimized |
-| float32/64 | Float32/64 | SIMD optimized |
-| string | String/Binary | Dictionary encoding support |
-| bool | Boolean | - |
-| time.Time | Timestamp | Nanosecond precision |
+    "github.com/TFMV/arrowgen/zero/encode"
+    "github.com/apache/arrow-go/v18/arrow/memory"
+)
+
+func main() {
+    // Sample data
+    users := generateLargeUserArray() // Your function to generate data
+    
+    // Create schema
+    schema := createUserSchema() // Your function to create schema
+    
+    // Create high-throughput encoder
+    encoder := encode.NewEncoder(
+        schema, 
+        encode.WithMode(encode.ModeHighThroughput),
+        encode.WithAllocator(memory.NewGoAllocator()),
+        encode.WithWorkers(runtime.GOMAXPROCS(0)),
+    )
+    
+    // Encode with high-throughput mode
+    record, err := encoder.Encode(users)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer record.Release()
+    
+    // Process the record...
+}
+```
+
+### Working with Maps
+
+Both APIs also support working with dynamic maps:
+
+```go
+// Using standard API with maps
+mapData := []map[string]interface{}{
+    {"id": 1, "name": "Alice", "active": true},
+    {"id": 2, "name": "Bob", "active": false},
+}
+
+// Infer schema from first map
+schema, err := schema.SchemaFromMap(mapData[0])
+if err != nil {
+    log.Fatal(err)
+}
+
+// Encode maps to Arrow
+enc := encode.NewEncoder(schema)
+record, err := enc.Encode(mapData)
+if err != nil {
+    log.Fatal(err)
+}
+defer record.Release()
+
+// Decode back to maps
+var decodedMaps []map[string]interface{}
+dec := decode.NewDecoder(schema)
+if err := dec.Decode(record, &decodedMaps); err != nil {
+    log.Fatal(err)
+}
+```
+
+## Performance Characteristics
+
+### Standard API
+
+Provides good performance for most use cases:
+
+- Typical encoding: ~1M records/sec
+- Typical decoding: ~1.2M records/sec
+- Memory usage: Moderate, with standard Go allocations
+
+### Zero API
+
+#### Zero-Allocation Mode
+
+| Data Structure | Decode Speed | Memory Usage | Allocations |
+|----------------|--------------|--------------|-------------|
+| Simple Struct (100 rows) | 8.7 µs/op | 5.3 KB | 7 allocs |
+| Simple Struct (10K rows) | 248.3 µs/op | 484 KB | 10 allocs |
+| Complex Struct (10K rows) | 1.1 ms/op | 1.7 MB | 20016 allocs |
+
+#### High-Throughput Mode
+
+Performance measurements are in progress, but early results show significant speedups for batch processing tasks.
+
+### Schema Inference Performance
+
+Schema inference is extremely fast, adding minimal overhead:
+
+| Data Structure | Operations/sec | Time/op | Memory/op |
+|----------------|---------------|---------|-----------|
+| Simple Struct | 1.92M | 626.5 ns | 1.7 KB |
+| Complex Struct | 606K | 1.97 µs | 5.1 KB |
+| Map (100 entries) | 141K | 8.64 µs | 34.9 KB |
+
+## Choosing the Right API
+
+### Use the Standard API when
+
+- You need a balance of performance and usability
+- Memory safety is important
+- You're working with moderate data volumes
+- You prefer a simpler API
+
+### Use the Zero API when
+
+- You need maximum performance
+- You're working with large data volumes
+- You're comfortable with managing memory carefully
+- You need fine-grained control over allocations
+
+Within the Zero API:
+
+- **Zero-Allocation Mode**: For real-time systems, memory-constrained environments
+- **High-Throughput Mode**: For batch processing, ETL, analytics workloads
+
+## Supported Types
+
+| Go Type | Arrow Type | Standard API | Zero API |
+|---------|------------|--------------|----------|
+| int8-64 | Int8-64 | ✓ | ✓ |
+| uint8-64 | UInt8-64 | ✓ | ✓ |
+| float32/64 | Float32/64 | ✓ | ✓ |
+| string | String/Binary | ✓ | ✓ |
+| bool | Boolean | ✓ | ✓ |
+| time.Time | Timestamp | ✓ | ✓ |
+| []byte | Binary | ✓ | ✓ |
+| struct | Struct | ✓ | ✓ |
+| map | Map | ✓ | ✓ |
+| slice/array | List | ✓ | ✓ |
 
 ## Contributing
 
 Contributions are welcome! Areas of focus:
 
-1. Reducing memory allocations
-2. Expanding SIMD optimizations
-3. Adding support for nested types
-4. Improving dictionary encoding
+1. Expanding SIMD optimizations
+2. Adding support for additional Arrow types
+3. Improving documentation and examples
+4. Adding benchmarks for specific use cases
 
 ## License
 
