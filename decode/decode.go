@@ -3,6 +3,7 @@ package decode
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
@@ -46,10 +47,6 @@ func (d *Decoder) Decode(record arrow.Record, out interface{}) error {
 		sliceVal.SetLen(numRows)
 	}
 
-	// Create error channel and wait group for concurrent processing
-	errChan := make(chan error, record.NumCols())
-	var wg sync.WaitGroup
-
 	// Pre-initialize map elements if needed
 	if elemType.Elem().Kind() == reflect.Map {
 		for i := 0; i < numRows; i++ {
@@ -60,46 +57,87 @@ func (d *Decoder) Decode(record arrow.Record, out interface{}) error {
 		}
 	}
 
+	// Determine optimal number of goroutines based on data size
+	numCols := int(record.NumCols())
+	maxGoroutines := runtime.GOMAXPROCS(0)
+	var numGoroutines int
+	if numRows < 1000 {
+		// For small datasets, process sequentially
+		numGoroutines = 1
+	} else if numRows < 10000 {
+		// For medium datasets, use half the available processors
+		numGoroutines = maxGoroutines / 2
+	} else {
+		// For large datasets, use all available processors
+		numGoroutines = maxGoroutines
+	}
+
+	// Limit goroutines to number of columns
+	if numGoroutines > numCols {
+		numGoroutines = numCols
+	}
+
+	// Create work channel and error channel
+	workChan := make(chan int, numCols)
+	errChan := make(chan error, numCols)
+	var wg sync.WaitGroup
+
 	// Create a slice of mutexes for each row
 	rowMutexes := make([]sync.Mutex, numRows)
 
-	for i := 0; i < int(record.NumCols()); i++ {
+	// Start worker goroutines
+	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
-		go func(colIdx int) {
+		go func() {
 			defer wg.Done()
+			for colIdx := range workChan {
+				col := record.Column(colIdx)
+				if col == nil {
+					errChan <- fmt.Errorf("column %d is nil", colIdx)
+					return
+				}
 
-			col := record.Column(colIdx)
-			if col == nil {
-				errChan <- fmt.Errorf("column %d is nil", colIdx)
-				return
-			}
-
-			fieldName := record.Schema().Field(colIdx).Name
-			values := make([]interface{}, col.Len())
-
-			if err := d.extractValues(col, values); err != nil {
-				errChan <- fmt.Errorf("failed to extract values from column %s: %w", fieldName, err)
-				return
-			}
-
-			// Set values for each row
-			for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-				elem := sliceVal.Index(rowIdx)
-				if elem.Kind() == reflect.Map {
-					if values[rowIdx] != nil {
-						rowMutexes[rowIdx].Lock()
-						elem.SetMapIndex(reflect.ValueOf(fieldName), reflect.ValueOf(values[rowIdx]))
-						rowMutexes[rowIdx].Unlock()
-					}
+				fieldName := record.Schema().Field(colIdx).Name
+				values := d.valuePool.Get()
+				if cap(values) < col.Len() {
+					values = make([]interface{}, col.Len())
 				} else {
-					if err := d.setStructField(elem, fieldName, values[rowIdx]); err != nil {
-						errChan <- fmt.Errorf("failed to set field %s: %w", fieldName, err)
-						return
+					values = values[:col.Len()]
+				}
+
+				if err := d.extractValues(col, values); err != nil {
+					errChan <- fmt.Errorf("failed to extract values from column %s: %w", fieldName, err)
+					return
+				}
+
+				// Set values for each row
+				for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+					elem := sliceVal.Index(rowIdx)
+					if elem.Kind() == reflect.Map {
+						if values[rowIdx] != nil {
+							rowMutexes[rowIdx].Lock()
+							elem.SetMapIndex(reflect.ValueOf(fieldName), reflect.ValueOf(values[rowIdx]))
+							rowMutexes[rowIdx].Unlock()
+						}
+					} else {
+						if err := d.setStructField(elem, fieldName, values[rowIdx]); err != nil {
+							errChan <- fmt.Errorf("failed to set field %s: %w", fieldName, err)
+							return
+						}
 					}
 				}
+
+				// Return values slice to pool
+				d.valuePool.Put(values)
 			}
-		}(i)
+		}()
 	}
+
+	// Send work to goroutines
+	for i := 0; i < numCols; i++ {
+		workChan <- i
+	}
+	close(workChan)
 
 	// Wait for all goroutines to complete
 	wg.Wait()
