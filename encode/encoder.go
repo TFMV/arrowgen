@@ -3,6 +3,7 @@ package encode
 import (
 	"fmt"
 	"reflect"
+	"runtime"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type Encoder struct {
 	schema    *arrow.Schema
 	memPool   *pool.MemPool
 	valuePool *pool.ValuePool
+	simdPool  *pool.SIMDPool
 	fieldMap  sync.Map // Thread-safe map for field indices
 }
 
@@ -27,6 +29,7 @@ func NewEncoder(schema *arrow.Schema) *Encoder {
 		schema:    schema,
 		memPool:   pool.NewMemPool(),
 		valuePool: pool.NewValuePool(),
+		simdPool:  pool.NewSIMDPool(),
 	}
 }
 
@@ -71,33 +74,64 @@ func (e *Encoder) Encode(data interface{}) (arrow.Record, error) {
 		}
 	}
 
-	// Process each field concurrently
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(e.schema.Fields()))
-
-	for i := range e.schema.Fields() {
-		wg.Add(1)
-		go func(fieldIdx int) {
-			defer wg.Done()
-
-			field := e.schema.Field(fieldIdx)
-			builder := builders[fieldIdx]
-
-			// Extract values for this field
-			values := make([]interface{}, 0, numRows)
-
-			if err := e.extractValues(val, field.Name, &values, numRows); err != nil {
-				errChan <- fmt.Errorf("failed to extract values for field %s: %w", field.Name, err)
-				return
-			}
-
-			// Append values to builder
-			if err := e.appendValues(builder, values); err != nil {
-				errChan <- fmt.Errorf("failed to append values for field %s: %w", field.Name, err)
-				return
-			}
-		}(i)
+	// Determine optimal number of goroutines based on data size
+	numFields := len(e.schema.Fields())
+	maxGoroutines := runtime.GOMAXPROCS(0)
+	var numGoroutines int
+	if numRows < 1000 {
+		// For small datasets, process sequentially
+		numGoroutines = 1
+	} else if numRows < 10000 {
+		// For medium datasets, use half the available processors
+		numGoroutines = maxGoroutines / 2
+	} else {
+		// For large datasets, use all available processors
+		numGoroutines = maxGoroutines
 	}
+
+	// Limit goroutines to number of fields
+	if numGoroutines > numFields {
+		numGoroutines = numFields
+	}
+
+	// Create work channel and error channel
+	workChan := make(chan int, numFields)
+	errChan := make(chan error, numFields)
+	var wg sync.WaitGroup
+
+	// Start worker goroutines
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for fieldIdx := range workChan {
+				field := e.schema.Field(fieldIdx)
+				builder := builders[fieldIdx]
+
+				// Extract values for this field
+				values := make([]interface{}, 0, numRows)
+				if err := e.extractValues(val, field.Name, &values, numRows); err != nil {
+					errChan <- fmt.Errorf("failed to extract values for field %s: %w", field.Name, err)
+					return
+				}
+
+				// Append values to builder
+				if err := e.appendValues(builder, values); err != nil {
+					errChan <- fmt.Errorf("failed to append values for field %s: %w", field.Name, err)
+					return
+				}
+
+				// Return values slice to pool
+				e.valuePool.Put(values)
+			}
+		}()
+	}
+
+	// Send work to goroutines
+	for i := range e.schema.Fields() {
+		workChan <- i
+	}
+	close(workChan)
 
 	// Wait for all goroutines to complete
 	wg.Wait()
@@ -121,6 +155,15 @@ func (e *Encoder) Encode(data interface{}) (arrow.Record, error) {
 
 // extractValues extracts values from a slice of structs or maps for a given field
 func (e *Encoder) extractValues(v reflect.Value, fieldName string, values *[]interface{}, numRows int) error {
+	// Get slice from pool
+	*values = e.valuePool.Get()
+	if cap(*values) < numRows {
+		// If pooled slice is too small, create a new one
+		*values = make([]interface{}, 0, numRows)
+	} else {
+		*values = (*values)[:0] // Reset length but keep capacity
+	}
+
 	isStruct := v.Index(0).Kind() == reflect.Struct
 
 	if isStruct {
@@ -173,7 +216,7 @@ func (e *Encoder) appendValues(builder array.Builder, values []interface{}) erro
 	if len(values) >= 8 { // Only use SIMD for larger slices
 		switch b := builder.(type) {
 		case *array.Int8Builder:
-			return appendInt8ValuesSIMD(b, values)
+			return appendInt8ValuesSIMD(e, b, values)
 		case *array.Int16Builder:
 			return appendInt16ValuesSIMD(b, values)
 		case *array.Int32Builder:
@@ -492,9 +535,13 @@ func (e *Encoder) appendValues(builder array.Builder, values []interface{}) erro
 }
 
 // appendInt8ValuesSIMD appends int8 values using SIMD-style processing
-func appendInt8ValuesSIMD(b *array.Int8Builder, values []interface{}) error {
-	data := make([]int8, len(values))
-	nulls := make([]bool, len(values))
+func appendInt8ValuesSIMD(e *Encoder, b *array.Int8Builder, values []interface{}) error {
+	data := e.simdPool.GetInt8Slice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutInt8Slice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
 
 	// Process values in chunks of 8 for better cache utilization
 	for i := 0; i <= len(values)-8; i += 8 {
@@ -1063,132 +1110,4 @@ func makeBuilder(pool memory.Allocator, dt arrow.DataType) (array.Builder, error
 	default:
 		return nil, fmt.Errorf("unsupported Arrow type: %v", dt)
 	}
-}
-
-// appendValue appends a value to the given Arrow builder.
-func appendValue(builder array.Builder, value interface{}) error {
-	switch b := builder.(type) {
-	case *array.Int8Builder:
-		v, ok := toInt8(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Int16Builder:
-		v, ok := toInt16(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Int32Builder:
-		v, ok := toInt32(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Int64Builder:
-		v, ok := toInt64(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Uint8Builder:
-		v, ok := toUint8(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Uint16Builder:
-		v, ok := toUint16(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Uint32Builder:
-		v, ok := toUint32(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Uint64Builder:
-		v, ok := toUint64(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Float32Builder:
-		v, ok := toFloat32(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.Float64Builder:
-		v, ok := toFloat64(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.StringBuilder:
-		v, ok := value.(string)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.BooleanBuilder:
-		v, ok := value.(bool)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(v)
-		}
-	case *array.TimestampBuilder:
-		v, ok := toInt64(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(arrow.Timestamp(v))
-		}
-	case *array.Date32Builder:
-		v, ok := toInt32(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(arrow.Date32(v))
-		}
-	case *array.Date64Builder:
-		v, ok := toInt64(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(arrow.Date64(v))
-		}
-	case *array.Time32Builder:
-		v, ok := toInt32(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(arrow.Time32(v))
-		}
-	case *array.Time64Builder:
-		v, ok := toInt64(value)
-		if !ok {
-			b.AppendNull()
-		} else {
-			b.Append(arrow.Time64(v))
-		}
-	default:
-		return fmt.Errorf("unsupported builder type: %T", builder)
-	}
-	return nil
 }
