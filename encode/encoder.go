@@ -235,6 +235,22 @@ func (e *Encoder) appendValues(builder array.Builder, values []interface{}) erro
 			return appendFloat32ValuesSIMD(b, values)
 		case *array.Float64Builder:
 			return appendFloat64ValuesSIMD(b, values)
+		case *array.BooleanBuilder:
+			return appendBooleanValuesSIMD(e, b, values)
+		case *array.Date32Builder:
+			return appendDate32ValuesSIMD(e, b, values)
+		case *array.Date64Builder:
+			return appendDate64ValuesSIMD(e, b, values)
+		case *array.Time32Builder:
+			return appendTime32ValuesSIMD(e, b, values)
+		case *array.Time64Builder:
+			return appendTime64ValuesSIMD(e, b, values)
+		case *array.TimestampBuilder:
+			return appendTimestampValuesSIMD(e, b, values)
+		case *array.StringBuilder:
+			return appendStringValuesSIMD(e, b, values)
+		case *array.BinaryBuilder:
+			return appendBinaryValuesSIMD(e, b, values)
 		}
 	}
 
@@ -948,6 +964,366 @@ func appendFloat64ValuesSIMD(b *array.Float64Builder, values []interface{}) erro
 	return nil
 }
 
+// appendBooleanValuesSIMD appends boolean values using SIMD-style processing
+func appendBooleanValuesSIMD(e *Encoder, b *array.BooleanBuilder, values []interface{}) error {
+	data := e.simdPool.GetBoolSlice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutBoolSlice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toBool(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toBool(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(data[i])
+		}
+	}
+
+	return nil
+}
+
+// appendDate32ValuesSIMD appends date32 values using SIMD-style processing
+func appendDate32ValuesSIMD(e *Encoder, b *array.Date32Builder, values []interface{}) error {
+	data := e.simdPool.GetInt32Slice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutInt32Slice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toDate32(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toDate32(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(arrow.Date32(data[i]))
+		}
+	}
+
+	return nil
+}
+
+// appendTimestampValuesSIMD appends timestamp values using SIMD-style processing
+func appendTimestampValuesSIMD(e *Encoder, b *array.TimestampBuilder, values []interface{}) error {
+	data := e.simdPool.GetInt64Slice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutInt64Slice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toTimestamp(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toTimestamp(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(arrow.Timestamp(data[i]))
+		}
+	}
+
+	return nil
+}
+
+// appendDate64ValuesSIMD appends date64 values using SIMD-style processing
+func appendDate64ValuesSIMD(e *Encoder, b *array.Date64Builder, values []interface{}) error {
+	data := e.simdPool.GetInt64Slice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutInt64Slice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toDate64(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toDate64(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(arrow.Date64(data[i]))
+		}
+	}
+
+	return nil
+}
+
+// appendTime32ValuesSIMD appends time32 values using SIMD-style processing
+func appendTime32ValuesSIMD(e *Encoder, b *array.Time32Builder, values []interface{}) error {
+	data := e.simdPool.GetInt32Slice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutInt32Slice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toTime32(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toTime32(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(arrow.Time32(data[i]))
+		}
+	}
+
+	return nil
+}
+
+// appendTime64ValuesSIMD appends time64 values using SIMD-style processing
+func appendTime64ValuesSIMD(e *Encoder, b *array.Time64Builder, values []interface{}) error {
+	data := e.simdPool.GetInt64Slice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutInt64Slice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toTime64(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toTime64(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(arrow.Time64(data[i]))
+		}
+	}
+
+	return nil
+}
+
+// appendStringValuesSIMD appends string values using SIMD-style processing
+func appendStringValuesSIMD(e *Encoder, b *array.StringBuilder, values []interface{}) error {
+	data := e.simdPool.GetStringSlice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutStringSlice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toString(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toString(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(data[i])
+		}
+	}
+
+	return nil
+}
+
+// appendBinaryValuesSIMD appends binary values using SIMD-style processing
+func appendBinaryValuesSIMD(e *Encoder, b *array.BinaryBuilder, values []interface{}) error {
+	data := e.simdPool.GetBytesSlice(len(values))
+	nulls := e.simdPool.GetBoolSlice(len(values))
+	defer func() {
+		e.simdPool.PutBytesSlice(data)
+		e.simdPool.PutBoolSlice(nulls)
+	}()
+
+	// Process values in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if values[i+j] == nil {
+				nulls[i+j] = true
+			} else if val, ok := toBinary(values[i+j]); ok {
+				data[i+j] = val
+			} else {
+				nulls[i+j] = true
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if values[i] == nil {
+			nulls[i] = true
+		} else if val, ok := toBinary(values[i]); ok {
+			data[i] = val
+		} else {
+			nulls[i] = true
+		}
+	}
+
+	// Bulk append to builder
+	for i := 0; i < len(values); i++ {
+		if nulls[i] {
+			b.AppendNull()
+		} else {
+			b.Append(data[i])
+		}
+	}
+
+	return nil
+}
+
 // Keep the original type conversion functions
 func toInt8(val interface{}) (int8, bool) {
 	switch v := val.(type) {
@@ -1067,6 +1443,98 @@ func toFloat64(val interface{}) (float64, bool) {
 	}
 }
 
+func toBool(val interface{}) (bool, bool) {
+	switch v := val.(type) {
+	case bool:
+		return v, true
+	case *bool:
+		if v != nil {
+			return *v, true
+		}
+	default:
+		return false, false
+	}
+	return false, false
+}
+
+func toDate32(val interface{}) (int32, bool) {
+	switch v := val.(type) {
+	case int32:
+		return v, true
+	case time.Time:
+		return int32(v.Unix() / 86400), true
+	default:
+		return 0, false
+	}
+}
+
+func toTimestamp(val interface{}) (int64, bool) {
+	switch v := val.(type) {
+	case int64:
+		return v, true
+	case time.Time:
+		return v.UnixNano(), true
+	default:
+		return 0, false
+	}
+}
+
+func toDate64(val interface{}) (int64, bool) {
+	switch v := val.(type) {
+	case int64:
+		return v, true
+	case time.Time:
+		return v.UnixMilli(), true
+	default:
+		return 0, false
+	}
+}
+
+func toTime32(val interface{}) (int32, bool) {
+	switch v := val.(type) {
+	case int32:
+		return v, true
+	case time.Time:
+		return int32(v.Unix()), true
+	default:
+		return 0, false
+	}
+}
+
+func toTime64(val interface{}) (int64, bool) {
+	switch v := val.(type) {
+	case int64:
+		return v, true
+	case time.Time:
+		return v.UnixNano(), true
+	default:
+		return 0, false
+	}
+}
+
+func toString(val interface{}) (string, bool) {
+	switch v := val.(type) {
+	case string:
+		return v, true
+	case *string:
+		if v != nil {
+			return *v, true
+		}
+	default:
+		return "", false
+	}
+	return "", false
+}
+
+func toBinary(val interface{}) ([]byte, bool) {
+	switch v := val.(type) {
+	case []byte:
+		return v, true
+	default:
+		return nil, false
+	}
+}
+
 // makeBuilder creates an Arrow builder for a given Arrow data type.
 func makeBuilder(pool memory.Allocator, dt arrow.DataType) (array.Builder, error) {
 	switch t := dt.(type) {
@@ -1107,6 +1575,30 @@ func makeBuilder(pool memory.Allocator, dt arrow.DataType) (array.Builder, error
 		return array.NewTime32Builder(pool, t), nil
 	case *arrow.Time64Type:
 		return array.NewTime64Builder(pool, t), nil
+	case *arrow.BinaryType:
+		return array.NewBinaryBuilder(pool, t), nil
+	case *arrow.FixedSizeBinaryType:
+		return array.NewFixedSizeBinaryBuilder(pool, t), nil
+	case *arrow.ListType:
+		return array.NewListBuilder(pool, t.Elem()), nil
+	case *arrow.FixedSizeListType:
+		return array.NewFixedSizeListBuilder(pool, int32(t.Len()), t.Elem()), nil
+	case *arrow.StructType:
+		return array.NewStructBuilder(pool, t), nil
+	case *arrow.MapType:
+		return array.NewMapBuilder(pool, t.KeyType(), t.ItemType(), t.KeysSorted), nil
+	case *arrow.Decimal128Type:
+		return array.NewDecimal128Builder(pool, t), nil
+	case *arrow.Decimal256Type:
+		return array.NewDecimal256Builder(pool, t), nil
+	case *arrow.MonthIntervalType:
+		return array.NewMonthIntervalBuilder(pool), nil
+	case *arrow.DayTimeIntervalType:
+		return array.NewDayTimeIntervalBuilder(pool), nil
+	case *arrow.MonthDayNanoIntervalType:
+		return array.NewMonthDayNanoIntervalBuilder(pool), nil
+	case *arrow.DurationType:
+		return array.NewDurationBuilder(pool, t), nil
 	default:
 		return nil, fmt.Errorf("unsupported Arrow type: %v", dt)
 	}
