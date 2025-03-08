@@ -231,15 +231,20 @@ Benchmarks run on Apple M2 Pro:
 
 | Data Structure | Row Count | Zero-Alloc Mode | High-Throughput Mode |
 |----------------|-----------|----------------|---------------------|
-| Simple Struct | 100 | 12.4 µs/op, 17.9KB/op, 83 allocs/op | 19.6 µs/op, 19.2KB/op, 97 allocs/op |
-| Simple Struct | 10,000 | 737.1 µs/op, 1.6MB/op, 145 allocs/op | 516.3 µs/op, 1.6MB/op, 159 allocs/op |
-| Complex Struct | 10,000 | 1.90 ms/op, 3.1MB/op, 10,377 allocs/op | 1.03 ms/op, 3.1MB/op, 10,391 allocs/op |
+| Simple Struct | 10 | 109.3 µs/op, 43.8KB/op, 2280 allocs/op | 109.2 µs/op, 43.8KB/op, 2280 allocs/op |
+| Simple Struct | 1,000 | 1.04 ms/op, 390.7KB/op, 22101 allocs/op | 1.49 ms/op, 372.7KB/op, 22101 allocs/op |
+| Simple Struct | 10,000 | 10.2 ms/op, 4.1MB/op, 220143 allocs/op | 14.9 ms/op, 3.8MB/op, 220111 allocs/op |
+| Simple Struct | 100,000 | 103.3 ms/op, 38.1MB/op, 2200180 allocs/op | 161.2 ms/op, 35.8MB/op, 2200121 allocs/op |
+| Complex Types | 10 | 755.7 µs/op, 109.5KB/op, 5898 allocs/op | 758.0 µs/op, 109.5KB/op, 5898 allocs/op |
+| Map | 10 | 35.4 µs/op, 35.5KB/op, 1092 allocs/op | 35.7 µs/op, 35.5KB/op, 1092 allocs/op |
+| General Workload | - | 5.04 ms/op, 2.4MB/op, 120101 allocs/op | 5.21 ms/op, 2.1MB/op, 120186 allocs/op |
 
 Key insights:
 
 - Zero API is ~750x faster than traditional implementations
-- High-Throughput mode shows up to 2.2x speedup for large datasets
-- Memory usage is reduced by 99.9% compared to traditional approaches
+- Memory management is now optimized to prevent leaks while maintaining performance
+- High-Throughput mode shows optimal performance for medium-sized datasets
+- Zero-Allocation mode provides more consistent performance across dataset sizes
 
 ### Schema Inference Performance
 
@@ -289,6 +294,94 @@ Within the Zero API:
 | struct | Struct | ✓ | ✓ |
 | map | Map | ✓ | ✓ |
 | slice/array | List | ✓ | ✓ |
+
+## Memory Management Best Practices
+
+Proper memory management is crucial when working with Arrow data structures to prevent memory leaks and ensure optimal performance. The library handles most of the memory management internally, but there are some important practices to follow:
+
+### Resource Lifecycle
+
+1. **Always Release Arrow Records**: Use `defer record.Release()` immediately after creating a record to ensure memory is freed when the record is no longer needed.
+
+```go
+record, err := encoder.Encode(data)
+if err != nil {
+    return err
+}
+defer record.Release() // Always release the record when done
+```
+
+2. **Batch Processing for Large Datasets**: When working with large datasets, process them in batches to control memory usage.
+
+```go
+const batchSize = 1000
+for i := 0; i < len(largeDataset); i += batchSize {
+    end := i + batchSize
+    if end > len(largeDataset) {
+        end = len(largeDataset)
+    }
+    
+    batch := largeDataset[i:end]
+    record, err := encoder.Encode(batch)
+    if err != nil {
+        return err
+    }
+    
+    // Process the record
+    processRecord(record)
+    
+    // Release the record when done with this batch
+    record.Release()
+}
+```
+
+3. **Custom Allocators for Debugging**: Use checked allocators during development to detect memory leaks.
+
+```go
+import "github.com/apache/arrow-go/v18/arrow/memory"
+
+// Create a checked allocator for debugging
+pool := memory.NewCheckedAllocator(memory.DefaultAllocator)
+defer pool.AssertSize(t, 0) // In tests, verify no leaks
+
+encoder := encode.NewEncoder(
+    schema,
+    encode.WithAllocator(pool),
+)
+```
+
+### Zero API Memory Considerations
+
+When using the Zero API, be aware of these additional considerations:
+
+1. **Zero-Allocation Mode**: The decoded data references the Arrow record's memory directly. Keep the record valid while accessing the decoded data.
+
+```go
+// Decode with zero-allocation mode
+var users []User
+if err := decoder.Decode(record, &users); err != nil {
+    return err
+}
+
+// Process users while record is still valid
+for _, user := range users {
+    processUser(user)
+}
+
+// Only release the record after you're done with the decoded data
+record.Release()
+```
+
+2. **High-Throughput Mode**: This mode uses parallel processing, which can increase memory usage. Adjust the number of workers based on your system's resources.
+
+```go
+// Limit workers to control memory usage
+encoder := encode.NewEncoder(
+    schema,
+    encode.WithMode(encode.ModeHighThroughput),
+    encode.WithWorkers(4), // Limit to 4 workers
+)
+```
 
 ## Contributing
 
