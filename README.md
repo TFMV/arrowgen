@@ -311,6 +311,24 @@ Within the Zero API:
 | map | Map | ✓ | ✓ |
 | slice/array | List | ✓ | ✓ |
 
+### Additional Types Supported by Standard API Only
+
+The standard API supports several additional specialized Arrow types that are not yet implemented in the zero API:
+
+| Go Type | Arrow Type | Standard API | Zero API |
+|---------|------------|--------------|----------|
+| time.Time | Date32/Date64 | ✓ | - |
+| time.Time | Time32/Time64 | ✓ | - |
+| []byte | FixedSizeBinary | ✓ | - |
+| []T | FixedSizeList | ✓ | - |
+| decimal.Decimal | Decimal128/Decimal256 | ✓ | - |
+| time.Duration | Duration | ✓ | - |
+| struct | MonthInterval | ✓ | - |
+| struct | DayTimeInterval | ✓ | - |
+| struct | MonthDayNanoInterval | ✓ | - |
+
+These specialized types are available for advanced use cases in the standard API. Future versions of the zero API may implement support for these types based on user demand.
+
 ## Memory Management Best Practices
 
 Proper memory management is crucial when working with Arrow data structures to prevent memory leaks and ensure optimal performance. The library handles most of the memory management internally, but there are some important practices to follow:
