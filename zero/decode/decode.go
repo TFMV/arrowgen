@@ -80,6 +80,9 @@ func (d *Decoder) Decode(record arrow.Record, out interface{}) error {
 	sliceVal := outVal.Elem()
 	numRows := int(record.NumRows())
 
+	fmt.Println("Decoding record with", numRows, "rows and", record.NumCols(), "columns")
+	fmt.Println("Output slice element type:", elemType.Elem().Name())
+
 	// Zero-Copy:  Directly use the underlying data buffers.  No intermediate `values` slice.
 	// Ensure output slice has enough capacity, re-use existing if possible, otherwise make slice
 	if sliceVal.Cap() < numRows {
@@ -107,6 +110,12 @@ func (d *Decoder) Decode(record arrow.Record, out interface{}) error {
 	numGoroutines := min(maxGoroutines, numCols)
 	if numRows < 1000 || isMap {
 		numGoroutines = 1 // Single-threaded for small data sets or maps
+	}
+
+	fmt.Println("Using", numGoroutines, "goroutines for decoding")
+	fmt.Println("Cached struct fields:", len(d.structFields))
+	for i, field := range d.structFields {
+		fmt.Printf("  Field %d: %s (Index: %d, Type: %v)\n", i+1, field.arrowName, field.index, field.fieldType)
 	}
 
 	workChan := make(chan int, numCols)
@@ -182,6 +191,7 @@ func (d *Decoder) cacheStructFields(t reflect.Type) {
 	numFields := t.NumField()
 	d.structFields = make([]cachedField, 0, numFields) // Pre-allocate, but use append for flexibility.
 
+	fmt.Println("Caching struct fields for type:", t.Name())
 	for i := 0; i < numFields; i++ {
 		f := t.Field(i)
 		arrowName := f.Tag.Get("arrow")
@@ -195,6 +205,7 @@ func (d *Decoder) cacheStructFields(t reflect.Type) {
 			}
 		}
 		if arrowName != "-" { // Skip fields explicitly excluded with `arrow:"-"`
+			fmt.Printf("  Field %d: %s -> %s (Type: %v)\n", i, f.Name, arrowName, f.Type)
 			d.structFields = append(d.structFields, cachedField{
 				index:     i,
 				fieldType: f.Type,
@@ -209,7 +220,10 @@ func (d *Decoder) cacheStructFields(t reflect.Type) {
 //
 //	This version directly uses the Arrow array data, with NO intermediate allocations.
 func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col arrow.Array, rowIdx int) error {
+	fmt.Printf("Setting field %s (index %d) for row %d\n", field.arrowName, field.index, rowIdx)
+
 	if col.IsNull(rowIdx) {
+		fmt.Println("  Value is null")
 		if field.omitEmpty {
 			return nil
 		}
@@ -224,8 +238,11 @@ func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col
 		return fmt.Errorf("field %s is not settable", field.arrowName)
 	}
 
+	fmt.Printf("  Column type: %T\n", col)
+
 	switch arr := col.(type) {
 	case *array.Int64:
+		fmt.Printf("  Int64 value: %d\n", arr.Value(rowIdx))
 		if fieldValue.Kind() == reflect.Struct && field.fieldType == reflect.TypeOf(time.Time{}) {
 			// Special handling for time.Time
 			t := time.Unix(0, arr.Value(rowIdx))
@@ -253,6 +270,7 @@ func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col
 		fieldValue.SetFloat(arr.Value(rowIdx))
 	case *array.String:
 		val := arr.Value(rowIdx)
+		fmt.Printf("  String value: %s\n", val)
 		switch field.fieldType.Kind() {
 		case reflect.String:
 			fieldValue.SetString(val) // Direct string assignment.
@@ -301,10 +319,6 @@ func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col
 		} else {
 			fieldValue.SetInt(int64(arr.Value(rowIdx)))
 		}
-	case *array.Time32:
-		fieldValue.SetInt(int64(arr.Value(rowIdx)))
-	case *array.Time64:
-		fieldValue.SetInt(int64(arr.Value(rowIdx)))
 	case *array.Binary:
 		val := arr.Value(rowIdx)
 		switch field.fieldType.Kind() {
@@ -316,9 +330,13 @@ func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col
 			} else {
 				return fmt.Errorf("cannot assign binary to field %s (type %v)", field.arrowName, field.fieldType)
 			}
+		default:
+			return fmt.Errorf("cannot assign binary to field %s (type %v)", field.arrowName, field.fieldType)
 		}
 	case *array.Dictionary:
+		fmt.Printf("  Dictionary array, row %d\n", rowIdx)
 		if arr.IsNull(rowIdx) {
+			fmt.Println("    Value is null")
 			if field.omitEmpty {
 				return nil
 			}
@@ -326,11 +344,14 @@ func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col
 			return nil
 		}
 		index := arr.GetValueIndex(rowIdx)
+		fmt.Printf("    Value index: %d\n", index)
 		switch dict := arr.Dictionary().(type) {
 		case *array.String:
 			val := dict.Value(index)
+			fmt.Printf("    String value: %s\n", val)
 			switch field.fieldType.Kind() {
 			case reflect.String:
+				fmt.Printf("    Setting string value: %s\n", val)
 				fieldValue.SetString(val) // Direct string assignment.
 			case reflect.Slice:
 				if field.fieldType.Elem().Kind() == reflect.Uint8 { // Check for []byte
@@ -351,156 +372,143 @@ func (d *Decoder) setStructFieldValue(elem reflect.Value, field cachedField, col
 				if field.fieldType.Elem().Kind() == reflect.Uint8 {
 					fieldValue.SetBytes(val)
 				} else {
-					return fmt.Errorf("cannot assign string to field %s (type %v)", field.arrowName, field.fieldType)
+					return fmt.Errorf("cannot assign binary to field %s (type %v)", field.arrowName, field.fieldType)
 				}
 			}
 		default:
 			return fmt.Errorf("unsupported dictionary type %T", dict)
 		}
 	default:
-		return fmt.Errorf("unsupported array type: %T for field %s", col, field.arrowName)
-	}
-
-	if field.fieldType == reflect.TypeOf(time.Time{}) {
-		switch col.DataType().ID() {
-		case arrow.TIMESTAMP:
-			unit := col.DataType().(*arrow.TimestampType).Unit
-			var ns int64
-			switch arr := col.(type) {
-			case *array.Timestamp:
-				ns = int64(arr.Value(rowIdx))
-			case *array.Int64:
-				ns = arr.Value(rowIdx)
-			default:
-				return fmt.Errorf("unexpected array type for timestamp: %T", col)
-			}
-			var t time.Time
-			switch unit {
-			case arrow.Nanosecond:
-				t = time.Unix(0, ns)
-			case arrow.Microsecond:
-				t = time.Unix(0, ns*1000)
-			case arrow.Millisecond:
-				t = time.Unix(0, ns*1000000)
-			case arrow.Second:
-				t = time.Unix(ns, 0)
-			}
-			fieldValue.Set(reflect.ValueOf(t))
-		}
-		return nil
+		return fmt.Errorf("unsupported array type: %T", col)
 	}
 
 	return nil
 }
 
-// setMapValue sets a value in a map, handling type conversions.
-// This, too, works directly with Arrow data.
-func (d *Decoder) setMapValue(elem reflect.Value, fieldName string, col arrow.Array, rowIdx int) error {
-	mapKey := reflect.ValueOf(fieldName)
+// setMapValue sets a value in a map, handling various types.
+func (d *Decoder) setMapValue(mapVal reflect.Value, key string, col arrow.Array, rowIdx int) error {
 	if col.IsNull(rowIdx) {
-		// Don't set anything for null values in maps (acts like omitempty)
-		return nil
+		return nil // Skip null values for maps
 	}
 
-	mapValType := elem.Type().Elem()
+	// Get the map's value type
+	mapType := mapVal.Type()
+	valueType := mapType.Elem()
+
+	fmt.Printf("Setting map value for key %s, value type: %v\n", key, valueType)
+
+	// Create a new value of the appropriate type
 	var val reflect.Value
 
 	switch arr := col.(type) {
 	case *array.Int64:
-		if !reflect.TypeOf(arr.Value(rowIdx)).AssignableTo(mapValType) {
-			return fmt.Errorf("cannot assign int64 to map value type %v", mapValType)
+		if valueType.Kind() == reflect.Struct && valueType == reflect.TypeOf(time.Time{}) {
+			// Special handling for time.Time
+			t := time.Unix(0, arr.Value(rowIdx))
+			val = reflect.ValueOf(t)
+		} else if valueType.Kind() == reflect.Interface {
+			// For interface{}, use the concrete type directly
+			val = reflect.ValueOf(arr.Value(rowIdx))
+		} else if canConvertToType(valueType, reflect.Int64) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert int64 to map value type %v", valueType)
 		}
-		val = reflect.ValueOf(arr.Value(rowIdx))
 	case *array.Int8:
-		value := int8(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign int8 to map value type %v", mapValType)
-		}
-
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(int8(arr.Value(rowIdx)))
+		} else if canConvertToType(valueType, reflect.Int8) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert int8 to map value type %v", valueType)
 		}
 	case *array.Int16:
-		value := int16(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign int16 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(int16(arr.Value(rowIdx)))
+		} else if canConvertToType(valueType, reflect.Int16) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert int16 to map value type %v", valueType)
 		}
 	case *array.Int32:
-		value := int32(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign int32 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(int32(arr.Value(rowIdx)))
+		} else if canConvertToType(valueType, reflect.Int32) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert int32 to map value type %v", valueType)
 		}
 	case *array.Uint8:
-		value := uint8(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign uint8 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(uint8(arr.Value(rowIdx)))
+		} else if canConvertToType(valueType, reflect.Uint8) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert uint8 to map value type %v", valueType)
 		}
 	case *array.Uint16:
-		value := uint16(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign uint16 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(uint16(arr.Value(rowIdx)))
+		} else if canConvertToType(valueType, reflect.Uint16) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert uint16 to map value type %v", valueType)
 		}
 	case *array.Uint32:
-		value := uint32(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign int32 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(uint32(arr.Value(rowIdx)))
+		} else if canConvertToType(valueType, reflect.Uint32) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert uint32 to map value type %v", valueType)
 		}
 	case *array.Uint64:
-		if !reflect.TypeOf(arr.Value(rowIdx)).AssignableTo(mapValType) {
-			return fmt.Errorf("cannot assign uint64 to map value type %v", mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(arr.Value(rowIdx))
+		} else if canConvertToType(valueType, reflect.Uint64) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert uint64 to map value type %v", valueType)
 		}
-		val = reflect.ValueOf(arr.Value(rowIdx))
 	case *array.Float32:
-		value := float32(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign float32 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(arr.Value(rowIdx))
+		} else if canConvertToType(valueType, reflect.Float32) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert float32 to map value type %v", valueType)
 		}
 	case *array.Float64:
-		if !reflect.TypeOf(arr.Value(rowIdx)).AssignableTo(mapValType) {
-			return fmt.Errorf("cannot assign float64 to map value type %v", mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(arr.Value(rowIdx))
+		} else if canConvertToType(valueType, reflect.Float64) {
+			val = reflect.ValueOf(arr.Value(rowIdx)).Convert(valueType)
+		} else {
+			return fmt.Errorf("cannot convert float64 to map value type %v", valueType)
 		}
-		val = reflect.ValueOf(arr.Value(rowIdx))
 	case *array.String:
-		val = reflect.ValueOf(arr.Value(rowIdx)) // Get string *directly*.
-		if val.Type().Kind() == reflect.String && mapValType.Kind() == reflect.Slice {
-			if mapValType.Elem().Kind() == reflect.Uint8 {
-				val = reflect.ValueOf([]byte(val.String())) // Convert to []byte
-			}
+		strVal := arr.Value(rowIdx)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(strVal)
+		} else if valueType.Kind() == reflect.String {
+			val = reflect.ValueOf(strVal)
+		} else if valueType.Kind() == reflect.Slice && valueType.Elem().Kind() == reflect.Uint8 {
+			val = reflect.ValueOf([]byte(strVal))
+		} else {
+			return fmt.Errorf("cannot convert string to map value type %v", valueType)
 		}
-
 	case *array.Boolean:
-		if !reflect.TypeOf(arr.Value(rowIdx)).AssignableTo(mapValType) {
-			return fmt.Errorf("cannot assign bool to map value type %v", mapValType)
+		if valueType.Kind() == reflect.Interface {
+			val = reflect.ValueOf(arr.Value(rowIdx))
+		} else if valueType.Kind() == reflect.Bool {
+			val = reflect.ValueOf(arr.Value(rowIdx))
+		} else {
+			return fmt.Errorf("cannot convert bool to map value type %v", valueType)
 		}
-		val = reflect.ValueOf(arr.Value(rowIdx))
 	case *array.Timestamp:
-		if mapValType == reflect.TypeOf(time.Time{}) {
-			ts := arr.Value(rowIdx)
+		ts := arr.Value(rowIdx)
+		if valueType.Kind() == reflect.Interface {
+			// For interface{}, use time.Time
 			var t time.Time
 			switch arr.DataType().(*arrow.TimestampType).Unit {
 			case arrow.Nanosecond:
@@ -513,201 +521,90 @@ func (d *Decoder) setMapValue(elem reflect.Value, fieldName string, col arrow.Ar
 				t = time.Unix(int64(ts), 0)
 			}
 			val = reflect.ValueOf(t)
-		} else {
-			val = reflect.ValueOf(int64(arr.Value(rowIdx)))
-		}
-	case *array.Date32:
-		if mapValType == reflect.TypeOf(time.Time{}) {
-			days := int64(arr.Value(rowIdx))
-			t := time.Unix(days*86400, 0)
+		} else if valueType == reflect.TypeOf(time.Time{}) {
+			var t time.Time
+			switch arr.DataType().(*arrow.TimestampType).Unit {
+			case arrow.Nanosecond:
+				t = time.Unix(0, int64(ts))
+			case arrow.Microsecond:
+				t = time.Unix(0, int64(ts)*1000)
+			case arrow.Millisecond:
+				t = time.Unix(0, int64(ts)*1000000)
+			case arrow.Second:
+				t = time.Unix(int64(ts), 0)
+			}
 			val = reflect.ValueOf(t)
+		} else if canConvertToType(valueType, reflect.Int64) {
+			val = reflect.ValueOf(int64(ts)).Convert(valueType)
 		} else {
-			value := int32(arr.Value(rowIdx))
-			if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-				return fmt.Errorf("cannot assign date32 to map value type %v", mapValType)
-			}
-			val = reflect.ValueOf(value)
-			if val.Type().ConvertibleTo(mapValType) {
-				val = val.Convert(mapValType)
-			}
-		}
-	case *array.Date64:
-		if mapValType == reflect.TypeOf(time.Time{}) {
-			ms := int64(arr.Value(rowIdx))
-			t := time.Unix(0, ms*1000000)
-			val = reflect.ValueOf(t)
-		} else {
-			if !reflect.TypeOf(arr.Value(rowIdx)).AssignableTo(mapValType) {
-				return fmt.Errorf("cannot assign date64 to map value type %v", mapValType)
-			}
-			val = reflect.ValueOf(int64(arr.Value(rowIdx)))
-		}
-	case *array.Time32:
-		value := int32(arr.Value(rowIdx))
-		if !reflect.TypeOf(value).AssignableTo(mapValType) && !reflect.TypeOf(value).ConvertibleTo(mapValType) {
-			return fmt.Errorf("cannot assign date32 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(value)
-		if val.Type().ConvertibleTo(mapValType) {
-			val = val.Convert(mapValType)
-		}
-	case *array.Time64:
-		if !reflect.TypeOf(arr.Value(rowIdx)).AssignableTo(mapValType) {
-			return fmt.Errorf("cannot assign time64 to map value type %v", mapValType)
-		}
-		val = reflect.ValueOf(int64(arr.Value(rowIdx)))
-	case *array.Binary:
-		value := arr.Value(rowIdx)
-		binaryVal := reflect.New(mapValType).Elem()
-		switch mapValType.Kind() {
-		case reflect.String:
-			binaryVal.SetString(string(value))
-			val = binaryVal
-		case reflect.Slice:
-			if mapValType.Elem().Kind() == reflect.Uint8 {
-				binaryVal.SetBytes(value) // Direct bytes assignment.
-				val = binaryVal           // Wrap in reflect.Value.
-			} else {
-				return fmt.Errorf("cannot assign binary to map value type %v", mapValType)
-			}
-		default:
-			return fmt.Errorf("cannot assign binary to map value type %v", mapValType)
-
+			return fmt.Errorf("cannot convert timestamp to map value type %v", valueType)
 		}
 	case *array.Dictionary:
 		index := arr.GetValueIndex(rowIdx)
 		switch dict := arr.Dictionary().(type) {
 		case *array.String:
-			val = reflect.ValueOf(dict.Value(index)) // Get string *directly*.
-			if val.Type().Kind() == reflect.String && mapValType.Kind() == reflect.Slice {
-				if mapValType.Elem().Kind() == reflect.Uint8 {
-					val = reflect.ValueOf([]byte(val.String())) // Convert to []byte
-				}
+			strVal := dict.Value(index)
+			if valueType.Kind() == reflect.Interface {
+				val = reflect.ValueOf(strVal)
+			} else if valueType.Kind() == reflect.String {
+				val = reflect.ValueOf(strVal)
+			} else if valueType.Kind() == reflect.Slice && valueType.Elem().Kind() == reflect.Uint8 {
+				val = reflect.ValueOf([]byte(strVal))
+			} else {
+				return fmt.Errorf("cannot convert dictionary string to map value type %v", valueType)
 			}
 		case *array.Binary:
-			value := dict.Value(index)
-			binaryVal := reflect.New(mapValType).Elem()
-			switch mapValType.Kind() {
-			case reflect.String:
-				binaryVal.SetString(string(value))
-				val = binaryVal
-			case reflect.Slice:
-				if mapValType.Elem().Kind() == reflect.Uint8 {
-					binaryVal.SetBytes(value) // Direct bytes assignment.
-					val = binaryVal
-				} else {
-					return fmt.Errorf("cannot assign binary to map value type %v", mapValType)
-				}
+			binVal := dict.Value(index)
+			if valueType.Kind() == reflect.Interface {
+				// For interface{}, prefer string over []byte
+				val = reflect.ValueOf(string(binVal))
+			} else if valueType.Kind() == reflect.String {
+				val = reflect.ValueOf(string(binVal))
+			} else if valueType.Kind() == reflect.Slice && valueType.Elem().Kind() == reflect.Uint8 {
+				val = reflect.ValueOf(binVal)
+			} else {
+				return fmt.Errorf("cannot convert dictionary binary to map value type %v", valueType)
 			}
-
 		default:
 			return fmt.Errorf("unsupported dictionary type %T", dict)
 		}
 	default:
-		return fmt.Errorf("unsupported array type %T for map field %s", col, fieldName)
+		return fmt.Errorf("unsupported array type: %T", col)
 	}
 
-	if mapValType == reflect.TypeOf(time.Time{}) {
-		switch col.DataType().ID() {
-		case arrow.TIMESTAMP:
-			unit := col.DataType().(*arrow.TimestampType).Unit
-			var ns int64
-			switch arr := col.(type) {
-			case *array.Timestamp:
-				ns = int64(arr.Value(rowIdx))
-			case *array.Int64:
-				ns = arr.Value(rowIdx)
-			default:
-				return fmt.Errorf("unexpected array type for timestamp: %T", col)
-			}
-			var t time.Time
-			switch unit {
-			case arrow.Nanosecond:
-				t = time.Unix(0, ns)
-			case arrow.Microsecond:
-				t = time.Unix(0, ns*1000)
-			case arrow.Millisecond:
-				t = time.Unix(0, ns*1000000)
-			case arrow.Second:
-				t = time.Unix(ns, 0)
-			}
-			val = reflect.ValueOf(t)
-		}
-	}
-
-	// Assign the value to the map
-	elem.SetMapIndex(mapKey, val)
+	// Set the map value
+	fmt.Printf("  Setting map value: %v (type: %T)\n", val.Interface(), val.Interface())
+	mapVal.SetMapIndex(reflect.ValueOf(key), val)
 	return nil
 }
 
-// Helper functions for string operations.
+// Helper function to check if a value can be converted to a given type
+func canConvertToType(destType reflect.Type, srcKind reflect.Kind) bool {
+	// Special case for interface{} - can accept any type
+	if destType.Kind() == reflect.Interface {
+		return true
+	}
+
+	switch destType.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return srcKind == reflect.Int8 || srcKind == reflect.Int16 ||
+			srcKind == reflect.Int32 || srcKind == reflect.Int64
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return srcKind == reflect.Uint8 || srcKind == reflect.Uint16 ||
+			srcKind == reflect.Uint32 || srcKind == reflect.Uint64
+	case reflect.Float32, reflect.Float64:
+		return srcKind == reflect.Float32 || srcKind == reflect.Float64
+	default:
+		return destType.Kind() == srcKind
+	}
+}
+
+// Helper function to check if a string contains a substring
 func contains(s, substr string) bool {
-	return index(s, substr) >= 0
-}
-func index(s, substr string) int {
-	n := len(substr)
-	switch {
-	case n == 0:
-		return 0
-	case n == 1:
-		// special case worth making fast
-		c := substr[0]
-		for i := 0; i < len(s); i++ {
-			if s[i] == c {
-				return i
-			}
-		}
-		return -1
-	case n == len(s):
-		if substr == s {
-			return 0
-		}
-		return -1
-	case n > len(s):
-		return -1
-	}
-	// Rabin-Karp search from Go strings package
-	hashss, pow := hashStr(substr)
-	sLen := len(s)
-	var h uint32
-	for i := 0; i < n; i++ {
-		h = h*primeRK + uint32(s[i])
-	}
-	if h == hashss && s[:n] == substr {
-		return 0
-	}
-	for i := n; i < sLen; {
-		h *= primeRK
-		h += uint32(s[i])
-		h -= pow * uint32(s[i-n])
-		i++
-		if h == hashss && s[i-n:i] == substr {
-			return i - n
-		}
-	}
-	return -1
+	return len(s) >= len(substr) && s[len(s)-len(substr):] == substr
 }
 
-// primeRK is the prime base used in Rabin-Karp algorithm.
-const primeRK = 16777619
-
-// hashStr returns the hash and the appropriate multiplicative
-// factor for use in Rabin-Karp algorithm.
-func hashStr(sep string) (uint32, uint32) {
-	hash := uint32(0)
-	for i := 0; i < len(sep); i++ {
-		hash = hash*primeRK + uint32(sep[i])
-	}
-	var pow, sq uint32 = 1, primeRK
-	for i := len(sep); i > 0; i >>= 1 {
-		if i&1 != 0 {
-			pow *= sq
-		}
-		sq *= sq
-	}
-	return hash, pow
-}
-
+// Helper function to get the minimum of two integers
 func min(a, b int) int {
 	if a < b {
 		return a
