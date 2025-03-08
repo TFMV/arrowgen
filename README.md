@@ -1,5 +1,7 @@
 # arrowgen
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/TFMV/arrowgen)](https://goreportcard.com/report/github.com/TFMV/arrowgen)
+
 A high-performance Go library for efficient encoding and decoding between Go types and Apache Arrow arrays. Designed for applications requiring fast data serialization with minimal memory overhead.
 
 ## Overview
@@ -218,8 +220,8 @@ Benchmarks run on Apple M2 Pro:
 
 #### Decoding Performance
 
-| Data Structure | Row Count | Zero-Alloc Mode | Standard Mode |
-|----------------|-----------|----------------|--------------|
+| Data Structure | Row Count | Zero-Alloc Mode | High-Throughput Mode |
+|----------------|-----------|----------------|---------------------|
 | Simple Struct | 100 | 8.7 µs/op, 5.3KB/op, 8 allocs/op | 8.7 µs/op, 5.3KB/op, 7 allocs/op |
 | Simple Struct | 10,000 | 229.9 µs/op, 484.1KB/op, 11 allocs/op | 233.4 µs/op, 484.1KB/op, 10 allocs/op |
 | Complex Struct | 10,000 | 1.17 ms/op, 1.7MB/op, 20,016 allocs/op | 1.17 ms/op, 1.7MB/op, 20,016 allocs/op |
