@@ -176,7 +176,7 @@ func (p *MemPool) PutBuffer(buf []byte) {
 	// Return to size-based bucket
 	index := getBucketIndex(cap(buf))
 	if index < maxBucketSize {
-		p.bufferPools[index].Put(buf[:0])
+		p.bufferPools[index].Put(&buf)
 	}
 }
 
@@ -191,10 +191,11 @@ func NewValuePool() *ValuePool {
 	return &ValuePool{
 		pool: sync.Pool{
 			New: func() interface{} {
-				return make([]interface{}, 0, 64)
+				slice := make([]interface{}, 0, 64)
+				return &slice
 			},
 		},
-		ringBuffer: NewValueRingBuffer(ringBufferSize),
+		ringBuffer: NewValueRingBuffer(32),
 	}
 }
 
@@ -204,7 +205,13 @@ func (p *ValuePool) Get() []interface{} {
 	if slice := p.ringBuffer.Get(); slice != nil {
 		return slice[:0]
 	}
-	return p.pool.Get().([]interface{})
+
+	if v := p.pool.Get(); v != nil {
+		pslice := v.(*[]interface{})
+		return (*pslice)[:0]
+	}
+
+	return make([]interface{}, 0, 64)
 }
 
 // Put returns a slice to the pool.
@@ -220,7 +227,9 @@ func (p *ValuePool) Put(slice []interface{}) {
 		return
 	}
 
-	p.pool.Put(slice[:0])
+	// Store larger slices in sync.Pool
+	slice = slice[:0]
+	p.pool.Put(&slice)
 }
 
 // SIMDPool manages pools of typed slices for SIMD operations
@@ -236,6 +245,8 @@ type SIMDPool struct {
 	float32Pool sync.Pool
 	float64Pool sync.Pool
 	boolPool    sync.Pool
+	stringPool  sync.Pool
+	bytesPool   sync.Pool
 }
 
 // NewSIMDPool creates a new SIMD pool
@@ -243,57 +254,80 @@ func NewSIMDPool() *SIMDPool {
 	return &SIMDPool{
 		int8Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]int8, 0, 1024)
+				slice := make([]int8, 0, 1024)
+				return &slice
 			},
 		},
 		int16Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]int16, 0, 1024)
+				slice := make([]int16, 0, 1024)
+				return &slice
 			},
 		},
 		int32Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]int32, 0, 1024)
+				slice := make([]int32, 0, 1024)
+				return &slice
 			},
 		},
 		int64Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]int64, 0, 1024)
+				slice := make([]int64, 0, 1024)
+				return &slice
 			},
 		},
 		uint8Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]uint8, 0, 1024)
+				slice := make([]uint8, 0, 1024)
+				return &slice
 			},
 		},
 		uint16Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]uint16, 0, 1024)
+				slice := make([]uint16, 0, 1024)
+				return &slice
 			},
 		},
 		uint32Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]uint32, 0, 1024)
+				slice := make([]uint32, 0, 1024)
+				return &slice
 			},
 		},
 		uint64Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]uint64, 0, 1024)
+				slice := make([]uint64, 0, 1024)
+				return &slice
 			},
 		},
 		float32Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]float32, 0, 1024)
+				slice := make([]float32, 0, 1024)
+				return &slice
 			},
 		},
 		float64Pool: sync.Pool{
 			New: func() interface{} {
-				return make([]float64, 0, 1024)
+				slice := make([]float64, 0, 1024)
+				return &slice
 			},
 		},
 		boolPool: sync.Pool{
 			New: func() interface{} {
-				return make([]bool, 0, 1024)
+				slice := make([]bool, 0, 1024)
+				return &slice
+			},
+		},
+		stringPool: sync.Pool{
+			New: func() interface{} {
+				slice := make([]string, 0, 1024)
+				return &slice
+			},
+		},
+		bytesPool: sync.Pool{
+			New: func() interface{} {
+				slice := make([]byte, 0, 1024)
+				return &slice
 			},
 		},
 	}
@@ -301,50 +335,203 @@ func NewSIMDPool() *SIMDPool {
 
 // GetInt8Slice returns a slice from the int8 pool
 func (p *SIMDPool) GetInt8Slice(size int) []int8 {
-	slice := p.int8Pool.Get().([]int8)
-	if cap(slice) < size {
-		return make([]int8, size)
+	var slice []int8
+	if v := p.int8Pool.Get(); v != nil {
+		pslice := v.(*[]int8)
+		slice = *pslice
+	} else {
+		slice = make([]int8, 0, size)
 	}
-	return slice[:size]
+	if cap(slice) < size {
+		slice = make([]int8, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
 }
 
 // PutInt8Slice returns a slice to the int8 pool
 func (p *SIMDPool) PutInt8Slice(slice []int8) {
-	if cap(slice) <= 1024 {
-		p.int8Pool.Put(slice[:0])
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.int8Pool.Put(&slice)
 	}
 }
 
 // GetInt16Slice returns a slice from the int16 pool
 func (p *SIMDPool) GetInt16Slice(size int) []int16 {
-	slice := p.int16Pool.Get().([]int16)
-	if cap(slice) < size {
-		return make([]int16, size)
+	var slice []int16
+	if v := p.int16Pool.Get(); v != nil {
+		pslice := v.(*[]int16)
+		slice = *pslice
+	} else {
+		slice = make([]int16, 0, size)
 	}
-	return slice[:size]
+	if cap(slice) < size {
+		slice = make([]int16, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
 }
 
 // PutInt16Slice returns a slice to the int16 pool
 func (p *SIMDPool) PutInt16Slice(slice []int16) {
-	if cap(slice) <= 1024 {
-		p.int16Pool.Put(slice[:0])
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.int16Pool.Put(&slice)
 	}
 }
 
 // GetBoolSlice returns a slice from the bool pool
 func (p *SIMDPool) GetBoolSlice(size int) []bool {
-	slice := p.boolPool.Get().([]bool)
+	var slice []bool
+	if v := p.boolPool.Get(); v != nil {
+		pslice := v.(*[]bool)
+		slice = *pslice
+	} else {
+		slice = make([]bool, 0, size)
+	}
 	if cap(slice) < size {
-		return make([]bool, size)
+		slice = make([]bool, size)
+	} else {
+		slice = slice[:size]
 	}
-	return slice[:size]
+	return slice
 }
 
-// PutBoolSlice returns a slice to the bool pool
+// PutBoolSlice returns a bool slice to the pool
 func (p *SIMDPool) PutBoolSlice(slice []bool) {
-	if cap(slice) <= 1024 {
-		p.boolPool.Put(slice[:0])
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.boolPool.Put(&slice)
 	}
 }
 
-// ... Add similar methods for other types ...
+// GetInt32Slice gets an int32 slice from the pool
+func (p *SIMDPool) GetInt32Slice(size int) []int32 {
+	var slice []int32
+	if v := p.int32Pool.Get(); v != nil {
+		pslice := v.(*[]int32)
+		slice = *pslice
+	} else {
+		slice = make([]int32, 0, size)
+	}
+	if cap(slice) < size {
+		slice = make([]int32, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
+}
+
+// PutInt32Slice returns an int32 slice to the pool
+func (p *SIMDPool) PutInt32Slice(slice []int32) {
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.int32Pool.Put(&slice)
+	}
+}
+
+// GetInt64Slice gets an int64 slice from the pool
+func (p *SIMDPool) GetInt64Slice(size int) []int64 {
+	var slice []int64
+	if v := p.int64Pool.Get(); v != nil {
+		pslice := v.(*[]int64)
+		slice = *pslice
+	} else {
+		slice = make([]int64, 0, size)
+	}
+	if cap(slice) < size {
+		slice = make([]int64, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
+}
+
+// PutInt64Slice returns an int64 slice to the pool
+func (p *SIMDPool) PutInt64Slice(slice []int64) {
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.int64Pool.Put(&slice)
+	}
+}
+
+// GetStringSlice gets a string slice from the pool
+func (p *SIMDPool) GetStringSlice(size int) []string {
+	var slice []string
+	if v := p.stringPool.Get(); v != nil {
+		pslice := v.(*[]string)
+		slice = *pslice
+	} else {
+		slice = make([]string, 0, size)
+	}
+	if cap(slice) < size {
+		slice = make([]string, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
+}
+
+// PutStringSlice returns a string slice to the pool
+func (p *SIMDPool) PutStringSlice(slice []string) {
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.stringPool.Put(&slice)
+	}
+}
+
+// GetBytesSlice gets a slice of byte slices from the pool
+func (p *SIMDPool) GetBytesSlice(size int) [][]byte {
+	// For byte slices, we need a slice of slices
+	return make([][]byte, size)
+}
+
+// PutBytesSlice returns a slice of byte slices to the pool
+func (p *SIMDPool) PutBytesSlice(slice [][]byte) {
+	// No-op as we don't pool these due to variable sizes
+}
+
+// GetFloat32Slice returns a slice from the float32 pool
+func (p *SIMDPool) GetFloat32Slice(size int) []float32 {
+	var slice []float32
+	if v := p.float32Pool.Get(); v != nil {
+		pslice := v.(*[]float32)
+		slice = *pslice
+	} else {
+		slice = make([]float32, 0, size)
+	}
+	if cap(slice) < size {
+		slice = make([]float32, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
+}
+
+// PutFloat32Slice returns a float32 slice to the pool
+func (p *SIMDPool) PutFloat32Slice(slice []float32) {
+	if cap(slice) > 0 {
+		slice = slice[:0]
+		p.float32Pool.Put(&slice)
+	}
+}
+
+// GetFloat64Slice returns a slice from the float64 pool
+func (p *SIMDPool) GetFloat64Slice(size int) []float64 {
+	var slice []float64
+	if v := p.float64Pool.Get(); v != nil {
+		pslice := v.(*[]float64)
+		slice = *pslice
+	} else {
+		slice = make([]float64, 0, size)
+	}
+	if cap(slice) < size {
+		slice = make([]float64, size)
+	} else {
+		slice = slice[:size]
+	}
+	return slice
+}

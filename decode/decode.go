@@ -17,6 +17,7 @@ type Decoder struct {
 	schema    *arrow.Schema
 	memPool   *pool.MemPool
 	valuePool *pool.ValuePool
+	simdPool  *pool.SIMDPool
 	fieldMap  sync.Map // Thread-safe map for field indices
 }
 
@@ -26,6 +27,7 @@ func NewDecoder(schema *arrow.Schema) *Decoder {
 		schema:    schema,
 		memPool:   pool.NewMemPool(),
 		valuePool: pool.NewValuePool(),
+		simdPool:  pool.NewSIMDPool(),
 	}
 }
 
@@ -181,6 +183,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Int64:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractInt64ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -189,6 +197,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Int8:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractInt8ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -197,6 +211,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Int16:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractInt16ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -205,6 +225,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Int32:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractInt32ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -213,6 +239,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Uint8:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractUint8ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -221,6 +253,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Uint16:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractUint16ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -229,6 +267,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Uint32:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractUint32ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -237,6 +281,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Uint64:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractUint64ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -245,6 +295,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Float32:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractFloat32ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -253,6 +309,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Float64:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractFloat64ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -261,6 +323,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.String:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractStringValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -269,6 +337,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Boolean:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractBooleanValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -277,6 +351,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Timestamp:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractTimestampValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -285,6 +365,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Date32:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractDate32ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -293,6 +379,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Date64:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractDate64ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -301,6 +393,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Time32:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractTime32ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -309,6 +407,12 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 			}
 		}
 	case *array.Time64:
+		// Use SIMD-style processing for better performance
+		if len(values) >= 8 {
+			return d.extractTime64ValuesSIMD(arr, values)
+		}
+
+		// Regular processing for small slices
 		for i := 0; i < len(values); i++ {
 			if arr.IsNull(i) {
 				values[i] = nil
@@ -316,9 +420,876 @@ func (d *Decoder) extractValues(col arrow.Array, values []interface{}) error {
 				values[i] = int64(arr.Value(i))
 			}
 		}
+	case *array.Binary:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				values[i] = arr.Value(i)
+			}
+		}
+	case *array.FixedSizeBinary:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				values[i] = arr.Value(i)
+			}
+		}
+	case *array.List:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				// Extract the list values
+				start := arr.Offsets()[i]
+				end := arr.Offsets()[i+1]
+				length := int(end - start)
+
+				listValues := d.valuePool.Get()
+				listValues = listValues[:length]
+
+				// Get the list array
+				listArray := arr.ListValues()
+
+				// Extract values from the list array
+				if err := d.extractValues(array.NewSlice(listArray, int64(start), int64(end)), listValues); err != nil {
+					return err
+				}
+
+				// Store the list values
+				values[i] = listValues
+			}
+		}
+	case *array.FixedSizeList:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				// Extract the list values
+				listSize := int(arr.Len())
+				listValues := d.valuePool.Get()
+				listValues = listValues[:listSize]
+
+				// Get the list array
+				listArray := arr.ListValues()
+
+				// Extract values from the list array
+				start := int64(i * listSize)
+				end := int64((i + 1) * listSize)
+				if err := d.extractValues(array.NewSlice(listArray, start, end), listValues); err != nil {
+					return err
+				}
+
+				// Store the list values
+				values[i] = listValues
+			}
+		}
+	case *array.Struct:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				// Create a map for the struct fields
+				structMap := make(map[string]interface{})
+
+				// Extract values for each field
+				for j := 0; j < arr.NumField(); j++ {
+					// Get the field name from the struct type
+					structType, ok := arr.DataType().(*arrow.StructType)
+					if !ok {
+						return fmt.Errorf("expected struct type, got %T", arr.DataType())
+					}
+					fieldName := structType.Field(j).Name
+
+					fieldArray := arr.Field(j)
+
+					// Extract the field value
+					fieldValues := d.valuePool.Get()
+					fieldValues = fieldValues[:1]
+
+					// Extract values from the field array
+					if err := d.extractValues(array.NewSlice(fieldArray, int64(i), int64(i+1)), fieldValues); err != nil {
+						return err
+					}
+
+					// Store the field value
+					structMap[fieldName] = fieldValues[0]
+
+					// Return the field values to the pool
+					d.valuePool.Put(fieldValues)
+				}
+
+				// Store the struct map
+				values[i] = structMap
+			}
+		}
+	case *array.Map:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				// Create a map for the map entries
+				mapEntries := make(map[interface{}]interface{})
+
+				// Get the map offset and length
+				start := arr.Offsets()[i]
+				end := arr.Offsets()[i+1]
+				length := int(end - start)
+
+				// Get the key and item arrays from the struct array
+				entries := arr.Items()
+				structArr, ok := entries.(*array.Struct)
+				if !ok {
+					return fmt.Errorf("expected struct array for map items, got %T", entries)
+				}
+
+				keyArray := structArr.Field(0)
+				itemArray := structArr.Field(1)
+
+				// Extract keys and values
+				keys := d.valuePool.Get()
+				keys = keys[:length]
+				items := d.valuePool.Get()
+				items = items[:length]
+
+				// Extract values from the key and item arrays
+				if err := d.extractValues(array.NewSlice(keyArray, int64(start), int64(end)), keys); err != nil {
+					return err
+				}
+				if err := d.extractValues(array.NewSlice(itemArray, int64(start), int64(end)), items); err != nil {
+					return err
+				}
+
+				// Build the map
+				for j := 0; j < length; j++ {
+					mapEntries[keys[j]] = items[j]
+				}
+
+				// Store the map
+				values[i] = mapEntries
+
+				// Return the keys and items to the pool
+				d.valuePool.Put(keys)
+				d.valuePool.Put(items)
+			}
+		}
+	case *array.Decimal128:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				values[i] = arr.Value(i)
+			}
+		}
+	case *array.Decimal256:
+		for i := 0; i < len(values); i++ {
+			if arr.IsNull(i) {
+				values[i] = nil
+			} else {
+				values[i] = arr.Value(i)
+			}
+		}
 	default:
 		return fmt.Errorf("unsupported array type: %T", col)
 	}
+	return nil
+}
+
+// extractInt64ValuesSIMD extracts int64 values using SIMD-style processing
+func (d *Decoder) extractInt64ValuesSIMD(arr *array.Int64, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractInt8ValuesSIMD extracts int8 values using SIMD-style processing
+func (d *Decoder) extractInt8ValuesSIMD(arr *array.Int8, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractInt16ValuesSIMD extracts int16 values using SIMD-style processing
+func (d *Decoder) extractInt16ValuesSIMD(arr *array.Int16, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractInt32ValuesSIMD extracts int32 values using SIMD-style processing
+func (d *Decoder) extractInt32ValuesSIMD(arr *array.Int32, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractUint8ValuesSIMD extracts uint8 values using SIMD-style processing
+func (d *Decoder) extractUint8ValuesSIMD(arr *array.Uint8, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractUint16ValuesSIMD extracts uint16 values using SIMD-style processing
+func (d *Decoder) extractUint16ValuesSIMD(arr *array.Uint16, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractUint32ValuesSIMD extracts uint32 values using SIMD-style processing
+func (d *Decoder) extractUint32ValuesSIMD(arr *array.Uint32, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractUint64ValuesSIMD extracts uint64 values using SIMD-style processing
+func (d *Decoder) extractUint64ValuesSIMD(arr *array.Uint64, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractFloat32ValuesSIMD extracts float32 values using SIMD-style processing
+func (d *Decoder) extractFloat32ValuesSIMD(arr *array.Float32, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractFloat64ValuesSIMD extracts float64 values using SIMD-style processing
+func (d *Decoder) extractFloat64ValuesSIMD(arr *array.Float64, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractStringValuesSIMD extracts string values using SIMD-style processing
+func (d *Decoder) extractStringValuesSIMD(arr *array.String, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractBooleanValuesSIMD extracts boolean values using SIMD-style processing
+func (d *Decoder) extractBooleanValuesSIMD(arr *array.Boolean, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractTimestampValuesSIMD extracts timestamp values using SIMD-style processing
+func (d *Decoder) extractTimestampValuesSIMD(arr *array.Timestamp, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractDate32ValuesSIMD extracts date32 values using SIMD-style processing
+func (d *Decoder) extractDate32ValuesSIMD(arr *array.Date32, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractDate64ValuesSIMD extracts date64 values using SIMD-style processing
+func (d *Decoder) extractDate64ValuesSIMD(arr *array.Date64, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractTime32ValuesSIMD extracts time32 values using SIMD-style processing
+func (d *Decoder) extractTime32ValuesSIMD(arr *array.Time32, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
+	return nil
+}
+
+// extractTime64ValuesSIMD extracts time64 values using SIMD-style processing
+func (d *Decoder) extractTime64ValuesSIMD(arr *array.Time64, values []interface{}) error {
+	// Get a slice from the pool to store nulls
+	nulls := d.simdPool.GetBoolSlice(len(values))
+	defer d.simdPool.PutBoolSlice(nulls)
+
+	// Process nulls in chunks of 8 for better cache utilization
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			nulls[i+j] = arr.IsNull(i + j)
+		}
+	}
+
+	// Handle remaining nulls
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		nulls[i] = arr.IsNull(i)
+	}
+
+	// Process values in chunks of 8
+	for i := 0; i <= len(values)-8; i += 8 {
+		for j := 0; j < 8; j++ {
+			if !nulls[i+j] {
+				values[i+j] = arr.Value(i + j)
+			} else {
+				values[i+j] = nil
+			}
+		}
+	}
+
+	// Handle remaining values
+	for i := (len(values) / 8) * 8; i < len(values); i++ {
+		if !nulls[i] {
+			values[i] = arr.Value(i)
+		} else {
+			values[i] = nil
+		}
+	}
+
 	return nil
 }
 
