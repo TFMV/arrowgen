@@ -1,6 +1,7 @@
 # arrowgen
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/TFMV/arrowgen)](https://goreportcard.com/report/github.com/TFMV/arrowgen)
+[![Build and Test](https://github.com/TFMV/arrowgen/actions/workflows/build-test.yml/badge.svg)](https://github.com/TFMV/arrowgen/actions/workflows/build-test.yml)
 
 A high-performance Go library for efficient encoding and decoding between Go types and Apache Arrow arrays. Designed for applications requiring fast data serialization with minimal memory overhead.
 

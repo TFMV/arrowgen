@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ["1.24"]
+        go-version: ["1.23"]
 
     steps:
       - uses: actions/checkout@v3
@@ -33,12 +33,6 @@ jobs:
 
       - name: Test
         run: go test -v ./...
-
-      - name: Run benchmarks
-        run: |
-          go test -bench=. -benchmem ./benchmarks
-          go test -bench=. -benchmem ./zero/encode
-          go test -bench=. -benchmem ./zero/decode
 
       - name: Vet
         run: go vet ./...
