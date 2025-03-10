@@ -5,6 +5,8 @@
 
 A high-performance Go library for efficient encoding and decoding between Go types and Apache Arrow arrays. Designed for applications requiring fast data serialization with minimal memory overhead.
 
+Solution inspired by [loicalleyne](https://github.com/loicalleyne/bodkin)
+
 ## Overview
 
 `arrowgen` provides a type-safe interface for converting between native Go types (structs/maps) and Apache Arrow records. It offers two APIs:
